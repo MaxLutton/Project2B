@@ -16,8 +16,8 @@ int opt_yield = 0;
 char** values; //array of strings
 int mutex = 0;
 int spin = 0;
-int otherLock;
-pthread_mutex_t lock;
+int** spin_locks; //array of spin locks
+pthread_mutex_t** mutex_locks; //pointer to array of lock pointers (each sub-list needs one)
 int listFlag = 0;
 int numLists = 1;
 SortedList_t** master; //pointer to array of heads
@@ -52,27 +52,55 @@ void* threadRoutine(void* arg)
   int begin = um->begin;
   int end = um->end;
   int n = um->work;
-  if(spin)
-    while(__sync_lock_test_and_set(&otherLock, 1));
-  if(mutex)
-    if (pthread_mutex_lock(&lock))
-      {
-	perror("lock error");
-	exit(1);
-      }
+
   int i = 0;
   int which = 0;
   for (i = 0; i < n; i++)
     {
       //determine correct list, and insert into that list
+      //since each sub-list has its own lock, must check for
+      //each value
       which = hash(lotsOfElements[begin+i]->key);
-      SortedList_insert(master[which], lotsOfElements[begin+i]);
+      if(spin)
+	while(__sync_lock_test_and_set(spin_locks[which], 1));
+      if(mutex)
+	if (pthread_mutex_lock(mutex_locks[which]))
+	  {
+	    perror("lock error");
+	    exit(1);
+	  }
+     SortedList_insert(master[which], lotsOfElements[begin+i]);
+     if (spin)
+       __sync_lock_release(spin_locks[which], 0);
+    if (mutex)
+      if (pthread_mutex_unlock(mutex_locks[which]))
+      {
+	perror("unlocking mutex error");
+	exit(1);
+      }
+     
     }
   //get the length for some reason
   int len = 0;
   for (i = 0; i < numLists; i++)
     {
+      if(spin)
+	while(__sync_lock_test_and_set(spin_locks[i], 1));
+      if(mutex)
+	if (pthread_mutex_lock(mutex_locks[i]))
+	  {
+	    perror("lock error");
+	    exit(1);
+	  }
       int temp = SortedList_length(master[i]);
+      if (spin)
+	__sync_lock_release(spin_locks[i], 0);
+      if (mutex)
+	if (pthread_mutex_unlock(mutex_locks[i]))
+	  {
+	    perror("unlocking mutex error");
+	    exit(1);
+	  }
       if (temp < 0)
 	{
 	  perror("corrupt list (length)");
@@ -84,6 +112,14 @@ void* threadRoutine(void* arg)
   for (i = 0; i < n; i++)
     {
       which = hash(lotsOfElements[begin+i]->key);
+      if(spin)
+	while(__sync_lock_test_and_set(spin_locks[which], 1));
+      if(mutex)
+	if (pthread_mutex_lock(mutex_locks[which]))
+	  {
+	    perror("lock error");
+	    exit(1);
+	  }
       SortedListElement_t* temp = SortedList_lookup(master[which], lotsOfElements[begin+i]->key);
       if (temp == NULL)
 	{
@@ -95,16 +131,22 @@ void* threadRoutine(void* arg)
 	  perror("Corrupted List (D)");
 	  exit(1);
 	}
+      if (spin)
+	__sync_lock_release(spin_locks[which], 0);
+      if (mutex)
+	if (pthread_mutex_unlock(mutex_locks[which]))
+	  {
+	    perror("unlocking mutex error");
+	    exit(1);
+	  }
+      if (temp < 0)
+	{
+	  perror("corrupt list (length)");
+	  exit(1);
+	}
       free(temp);
     }
-  if (mutex)
-    if (pthread_mutex_unlock(&lock))
-      {
-	perror("unlocking mutex error");
-	exit(1);
-      }
-  if (spin)
-    __sync_lock_release(&otherLock, 0);
+ 
   return NULL;
 }
 
@@ -256,8 +298,19 @@ int main(int argc, char* argv[])
 
   if (mutex)
     {
-      if(pthread_mutex_init(&lock, NULL) != 0)
-	perror("mutex failed");
+      mutex_locks = calloc(numLists, sizeof(pthread_mutex_t*));
+      for (i = 0; i < numLists; i++)
+	{
+	  mutex_locks[i] = calloc(1, sizeof(pthread_mutex_t));
+	  if(pthread_mutex_init(mutex_locks[i], NULL) != 0)
+	    perror("mutex failed");
+	}
+    }
+  if (spin)
+    {
+      spin_locks = calloc(numLists, sizeof(int*));
+      for (i = 0; i < numLists; i++)
+	spin_locks[i] = calloc(1, sizeof(int));
     }
   //get initial time right before creating threads
   clock_gettime(CLOCK_MONOTONIC, &time_init);
@@ -297,7 +350,7 @@ int main(int argc, char* argv[])
     strcat(testName, "s");
   else
     strcat(testName, "none");
-  printf("%s,%d,%d,%d,%d,%d,%d\n",testName, numThreads, numIts, numLists, totalOps, time_diff.tv_nsec, avg); 
+  printf("%s,%d,%d,%d,%d,%d,%d\n",testName, numThreads, numIts, numLists, totalOps, time_diff.tv_nsec, avg);
   strerror(errnum);
   if (errnum)
     exit(errnum);
