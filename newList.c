@@ -19,7 +19,7 @@ int spin = 0;
 int otherLock;
 pthread_mutex_t lock;
 int listFlag = 0;
-int numLists = 0;
+int numLists = 1;
 SortedList_t** master; //pointer to array of heads
 SortedListElement_t** lotsOfElements; //array of element*'s to be inserted
 
@@ -32,8 +32,17 @@ struct argument
 
 int hash (const char* key)
 {
-  int temp = atoi(key);
-  int result = temp % numLists;
+  int sum = 0;
+  int i = 0;
+  while (i < 3)
+    {
+      int temp = key[i];
+      if (temp < 0)
+	temp *= -1;
+     sum +=temp;
+     i++;
+    }
+  int result = sum % numLists; 
   return result;
 }
 
@@ -121,7 +130,7 @@ int main(int argc, char* argv[])
   int numThreads=1;
   int numIts=1;
   int errnum=0;
-  char* testName = malloc(sizeof(char)*40);//more than enough
+  char* testName = calloc(40, sizeof(char));//more than enough
   char s;
   strcat(testName, "list-");
   while(1)
@@ -181,17 +190,18 @@ int main(int argc, char* argv[])
     }
   //initializing values and list
   int numValues = numIts * numThreads;
-  values = malloc(sizeof(char*)*numValues);//array of strings
+  values = calloc(numValues, sizeof(char*));//array of strings
   int i = 0;
   for(i = 0; i < numValues; i++) //random values for length 3 strings
     {
-      values[i] = malloc(sizeof(char)*3);
+      values[i] = malloc(sizeof(char)*4);
       int j = 0;
       for (j = 0; j < 3; j++)//1 char at a time
 	{
-	  srand(time(NULL)+j+i);
+	  srand(time(NULL)+j*i);
 	  values[i][j] = rand();
 	}
+      values[i][3] = '\0';
     }
 
 
@@ -207,12 +217,18 @@ int main(int argc, char* argv[])
   for (i = 0; i < numElements; i++)
     {
       lotsOfElements[i] = malloc(sizeof(SortedListElement_t));
-      lotsOfElements[i]->key = values[i]; 
+      lotsOfElements[i]->key = values[i];
+      lotsOfElements[i]->prev = NULL;
+      lotsOfElements[i]->next = NULL;
     }
   //initialize master list of head pointers
-  master = malloc(sizeof(SortedList_t**));
+  master = calloc(numLists, sizeof(SortedList_t*));
   for (i = 0; i < numLists; i++)
-    master[i] = malloc(sizeof(SortedList_t*));
+    {
+      master[i] = calloc(1, sizeof(SortedList_t));
+      master[i]->next = NULL;
+      master[i]->prev = NULL;
+    }
   
   int elementCount =0;
   for (i = 0; i < numThreads; i++)
